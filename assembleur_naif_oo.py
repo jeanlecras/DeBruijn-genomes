@@ -10,11 +10,10 @@ class Graph:
         else:
             self.table = {}
             self.k = k
-            self.color_count = 0
+            self.color_count = 0 # le premier génome ajouté a la couleur 1
         
     def __str__(self):
-        nb_edges = sum(len(node["prev_kmers"])+len(node["next_kmers"]) for node in self.table.values())
-        return f"{len(self.table)} {self.k}mers, {nb_edges} edges, {self.color_count} genomes"
+        return f"cDBG of {len(self.table)} {self.k}mers and {self.color_count} genomes"
     
     # un génome par fichier
     def add_genome(self, fasta_file):
@@ -22,60 +21,77 @@ class Graph:
         with open(fasta_file,"r") as file:
             for line in file:
                 line = line.strip()
-                if not line.startswith('>'):
-                    # premier noeud
-                    kmer = line[:self.k]
-                    next_kmer = line[1:self.k+1]
-                    if kmer in self.table:
-                        self.table[kmer]["next_kmers"].add(next_kmer)
-                        self.table[kmer]["colors"].add(self.color_count)
-                    else:
-                        self.table[kmer] = {"prev_kmers":set(), "next_kmers":{next_kmer}, "colors":{self.color_count}}
-                    
-                    for i in range(1,len(line)-self.k):
-                        prev_kmer = line[i-1:i-1+self.k]
-                        kmer = line[i:i+self.k]
-                        next_kmer = line[i+1:i+1+self.k]
+                if line.startswith('>'):
+                    pass
+                else:
+                    for pos in range(len(line)-self.k+1):
+                        kmer = line[pos:pos+self.k]                        
                         if kmer in self.table:
-                            self.table[kmer]["prev_kmers"].add(prev_kmer)
-                            self.table[kmer]["next_kmers"].add(next_kmer)
-                            self.table[kmer]["colors"].add(self.color_count)
+                            self.table[kmer].add(self.color_count)
                         else:
-                            self.table[kmer] = {"prev_kmers":{prev_kmer}, "next_kmers":{next_kmer}, "colors":{self.color_count}}
-                    
-                    #dernier noeud
-                    prev_kmer = line[len(line)-self.k-1:len(line)-1]
-                    kmer = line[len(line)-self.k:len(line)]
-                    if kmer in self.table:
-                        self.table[kmer]["prev_kmers"].add(prev_kmer)
-                        self.table[kmer]["colors"].add(self.color_count)
-                    else:
-                        self.table[kmer] = {"prev_kmers":{prev_kmer}, "next_kmers":set(), "colors":{self.color_count}}
+                            self.table[kmer] = {self.color_count}
                     
     
     def compare(self, fasta_file):
-        colors_counter = {}
-        kmer_set = set()
-        with open(fasta_file,"r") as file:
+        """
+        Questions :
+            Peut on ajouter des génomes au fur et à mesure ?
+            Faut il ajouter tous ses génomes et après compresser le graphe, ou ajouter un premier génome de façon minamale, puis un autre génome qui garde une structure minamale ?
+            Est-ce la que la recherche de génome dans le graphe doit expliquer la fait que le graphe soit compressé ou alors on a le droit de décompresser le graphe pour faire la recherche ?
+        """
+        headers = []
+        color_counts = []
+        nb_kmer_per_genome = []
+        with open(fasta_file, "r") as file:
             for line in file:
                 line = line.strip()
                 if line.startswith('>'):
-                    print(line) #header
+                    header = line[1:].split(" ")[0]
+                    headers.append(header)
+                    color_counts.append([0]*self.color_count)
+                    nb_kmer_per_genome.append(0)
                 else:
-                    for i in range(len(line)-self.k+1):
-                        kmer = line[i:i+self.k]
+                    nb_kmer = len(line)-self.k+1
+                    nb_kmer_per_genome[-1] += nb_kmer
+                    for pos in range(nb_kmer):
+                        kmer = line[pos:pos+self.k] 
                         if kmer in self.table:
-                            for color in self.table[kmer]["colors"]:
-                                if color in colors_counter:
-                                    colors_counter[color] +=1
-                                else:
-                                    colors_counter[color] = 1
-                        kmer_set.add(kmer)
+                            kmer_colors = self.table[kmer]
+                            for color in kmer_colors:
+                                color_counts[-1][color-1] += 1
         
-        for color in colors_counter:
-            ratio = colors_counter[color]/len(kmer_set)
-            print(f"{color} {ratio}", end="\t")
-        print()
+        for genome in range(len(nb_kmer_per_genome)):
+            print(headers[genome], *(round(color_count/nb_kmer_per_genome[genome],4) for color_count in color_counts[genome]), sep="\t")
+        
+    def compress(self):
+        """
+        crée une nouvelle table destinée à stocker des unitigs
+        tant que la table otiginale n'est pas vide:
+            récupérer le premier kmer de la table originale
+            si le kmer actuel a exactement une séquence qui le précède dans la nouvelle table, et cette séquence a extactement 1 kmer qui la suit dans la table originale (alors il s'agit forcément du kmer actuel):
+                ajouter une nouvelle entrée à la nouvelle table dont la clé correspond à la séquence (unitig) suivi du dernier nucléotide de notre kmer et la valeur est celle de la séquence (garde les mêmes couleurs)
+                supprimer la séquence de la nouvelle table
+            sinon:
+                ajouter le kmer à la nouvelle table avec la valeur qu'il a dans la table originale'
+            supprimer le kmer de la table originale
+        remplacer la table originale par la nouvelle table
+                                      
+        """
+        new_table = {}
+        while len(self.table) != 0:
+            kmer = next(iter(self.table))
+            prev_nodes_kmer = set(unitig for unitig in new_table if unitig.endswith(kmer[:-1]))
+            unitig = next(iter(prev_nodes_kmer))
+            next_nodes_unitig = set(unitig for unitig in self.table if unitig.startswith(kmer[1:]))
+            if len(prev_nodes_kmer) == len(next_nodes_unitig) == 1:
+                new_table[unitig+kmer[-1]] = new_table[unitig]
+                del new_table[unitig]
+            else:
+                new_table[kmer] = self.table[kmer]
+            del self.table[kmer]
+        self.table = new_table
+            
+        
         
     def write(self, filepath):
         with open(filepath, 'wb') as file:
@@ -83,6 +99,10 @@ class Graph:
                         
     
 graph = Graph()
-graph.add_genome("covid_ref_genome.fasta")
+graph.add_genome("B253_GCA_000190495.1.fasta")
+graph.add_genome("ECOR37_GCA_002190835.1.fasta")
+graph.add_genome("H299_GCA_000176695.2.fasta")
+graph.add_genome("IAI39_GCA_000026345.1.fasta")
+graph.add_genome("SAKAI_GCA_003028755.1.fasta")
 print(graph)
-graph.write("covid.cdbg")
+graph.compare("query.fa")
