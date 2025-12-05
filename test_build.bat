@@ -1,0 +1,1 @@
+python src/naive/dbg_indexer.py build -i sequences_file_list.txt -k 31 -o graph.cdbg

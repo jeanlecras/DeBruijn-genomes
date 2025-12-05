@@ -1,0 +1,1 @@
+python src/naive/dbg_indexer.py query -q data/query.fa -i graph.cdbg -o res_query.txt
